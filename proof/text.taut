@@ -1,0 +1,281 @@
+import "../src/alphabet.taut"
+import "../src/codec.taut"
+import "../src/text.taut"
+import "alphabet.taut"
+import "codec.taut"
+
+// For an alphabet that passes `alphabet_ok`: decoding the text of an encoding
+// gives back the bytes, and a text that decodes is the encoding of what it
+// decodes to.
+
+theorem code_sym_code(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  x: Sym
+): code_sym(a, sym_code(a, x)) = Some(x) {
+  match x {
+    Digit(
+      s
+    ) => Eq::congr(
+      ⟦digit_or_pad(□, sextet_code(a, s))⟧,
+      code_sextet_code(a, ok, s)
+    )
+    Pad => Eq::congr(⟦digit_or_pad(□, 61)⟧, code_sextet_pad(a, ok))
+  }
+}
+
+theorem codes_syms_codes(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  l: List(Sym)
+): codes_syms(a, syms_codes(a, l)) = Some(l) {
+  match l {
+    Nil => Refl
+    Cons(
+      x,
+      t
+    ) => Eq::trans(
+      Eq::congr(
+        ⟦cons_some(□, codes_syms(a, syms_codes(a, t)))⟧,
+        code_sym_code(a, ok, x)
+      ),
+      Eq::congr(⟦cons_some(Some(x), □)⟧, codes_syms_codes(a, ok, t))
+    )
+  }
+}
+
+pub theorem decode_text_with_encode_text_with(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  m: PadRule,
+  pm: Padding,
+  h: Takes(m, pm),
+  l: List(Byte)
+): decode_text_with(a, m, encode_text_with(a, pm, l)) = Some(l) {
+  Eq::trans(
+    Eq::congr(
+      ⟦decode_syms(m, □)⟧,
+      codes_syms_codes(a, ok, encode_with(pm, l))
+    ),
+    decode_with_encode_with(m, pm, h, l)
+  )
+}
+
+theorem decode_text_encode_text(
+  l: List(Byte)
+): decode_text(encode_text(l)) = Some(l) {
+  decode_text_with_encode_text_with(standard(), standard_ok(), PadRequired, Padded, Trivial, l)
+}
+
+// ---- the other direction ----------------------------------------------------
+
+fn SymBack(a: Alphabet, c: Nat, o: Option(Sym)): Prop {
+  match o: Prop {
+    None => True
+    Some(x) => sym_code(a, x) = c
+  }
+}
+
+theorem pad_back(
+  a: Alphabet,
+  c: Nat,
+  z: Bool
+): (Nat::eq(c, 61) = z) -> SymBack(a, c, if z { Some(Pad) } else { None }) {
+  match z {
+    true => ez => Eq::sym(Nat::eq_sound(c, 61, ez))
+    false => ez => Trivial
+  }
+}
+
+theorem digit_or_pad_back(
+  a: Alphabet,
+  c: Nat,
+  o: Option(Sextet)
+): (SextetBack(a, c, o)) -> SymBack(a, c, digit_or_pad(o, c)) {
+  match o {
+    None => k => pad_back(a, c, Nat::eq(c, 61))(Refl)
+    Some(s) => k => k
+  }
+}
+
+fn CodesBack(a: Alphabet, codes: List(Nat), o: Option(List(Sym))): Prop {
+  match o: Prop {
+    None => True
+    Some(l) => syms_codes(a, l) = codes
+  }
+}
+
+theorem cons_back(
+  a: Alphabet,
+  c: Nat,
+  t: List(Nat),
+  o: Option(Sym),
+  r: Option(List(Sym))
+): (SymBack(a, c, o)) -> (CodesBack(a, t, r)) -> CodesBack(a, Cons(c, t), cons_some(o, r)) {
+  match o {
+    None => k => j => Trivial
+    Some(x) => match r {
+      None => k => j => Trivial
+      Some(
+        u
+      ) => k => j => Eq::trans(
+        Eq::congr(⟦Cons(□, syms_codes(a, u))⟧, k),
+        Eq::congr(⟦Cons(c, □)⟧, j)
+      )
+    }
+  }
+}
+
+pub theorem codes_syms_back(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  codes: List(Nat)
+): CodesBack(a, codes, codes_syms(a, codes)) {
+  match codes {
+    Nil => Refl
+    Cons(
+      c,
+      t
+    ) => cons_back(
+      a,
+      c,
+      t,
+      code_sym(a, c),
+      codes_syms(a, t)
+    )(
+      digit_or_pad_back(a, c, code_sextet(a, c))(code_sextet_back(a, ok, c))
+    )(codes_syms_back(a, ok, t))
+  }
+}
+
+// The encodings a decoder rule takes back: the padded one when the pads are
+// required, the unpadded one when they are forbidden, either when optional.
+fn EncodesTo(a: Alphabet, m: PadRule, l: List(Byte), codes: List(Nat)): Prop {
+  match m: Prop {
+    PadRequired => encode_text_with(a, Padded, l) = codes
+    PadOptional => encode_text_with(a, Padded, l) = codes ∨ encode_text_with(a, Unpadded, l) = codes
+    PadForbidden => encode_text_with(a, Unpadded, l) = codes
+  }
+}
+
+pub fn TextBack(a: Alphabet, m: PadRule, codes: List(Nat), r: Option(List(Byte))): Prop {
+  match r: Prop {
+    None => True
+    Some(l) => EncodesTo(a, m, l, codes)
+  }
+}
+
+theorem codes_eq(
+  a: Alphabet,
+  pm: Padding,
+  l: List(Byte),
+  syms: List(Sym),
+  codes: List(Nat),
+  e1: encode_with(pm, l) = syms,
+  e2: syms_codes(a, syms) = codes
+): encode_text_with(a, pm, l) = codes {
+  Eq::trans(Eq::congr(⟦syms_codes(a, □)⟧, e1), e2)
+}
+
+theorem rule_back(
+  a: Alphabet,
+  m: PadRule,
+  l: List(Byte),
+  syms: List(Sym),
+  codes: List(Nat)
+): (
+  encode_with(written_in(m, syms), l) = syms
+) -> (syms_codes(a, syms) = codes) -> EncodesTo(a, m, l, codes) {
+  match m {
+    PadRequired => e1 => e2 => codes_eq(
+      a,
+      Padded,
+      l,
+      syms,
+      codes,
+      Eq::subst(
+        (pm: Padding) => encode_with(pm, l) = syms,
+        written_in_required(syms),
+        e1
+      ),
+      e2
+    )
+    PadForbidden => e1 => e2 => codes_eq(
+      a,
+      Unpadded,
+      l,
+      syms,
+      codes,
+      Eq::subst(
+        (pm: Padding) => encode_with(pm, l) = syms,
+        written_in_forbidden(syms),
+        e1
+      ),
+      e2
+    )
+    PadOptional => e1 => e2 => Or::elim(
+      padding_or(written_in(PadOptional, syms), l, syms)(e1),
+      (
+        p: encode_with(Padded, l) = syms
+      ) => OrInl(codes_eq(a, Padded, l, syms, codes, p, e2)),
+      (
+        q: encode_with(Unpadded, l) = syms
+      ) => OrInr(codes_eq(a, Unpadded, l, syms, codes, q, e2))
+    )
+  }
+}
+
+theorem syms_text_back(
+  a: Alphabet,
+  m: PadRule,
+  syms: List(Sym),
+  codes: List(Nat),
+  r: Option(List(Byte))
+): (
+  EncodesBack(r, written_in(m, syms), syms)
+) -> (syms_codes(a, syms) = codes) -> TextBack(a, m, codes, r) {
+  match r {
+    None => e1 => e2 => Trivial
+    Some(l) => e1 => e2 => rule_back(a, m, l, syms, codes)(e1)(e2)
+  }
+}
+
+pub theorem decode_text_back(
+  a: Alphabet,
+  m: PadRule,
+  codes: List(Nat),
+  o: Option(List(Sym))
+): (CodesBack(a, codes, o)) -> TextBack(a, m, codes, decode_syms(m, o)) {
+  match o {
+    None => k => Trivial
+    Some(
+      syms
+    ) => k => syms_text_back(a, m, syms, codes, decode_with(m, syms))(dec_back_go(m, syms, Got0))(k)
+  }
+}
+
+// A text that decodes is the encoding, in a form the rule takes, of what it
+// decodes to. With `PadRequired` or `PadForbidden` it is the only text that
+// decodes to those bytes.
+theorem encode_text_with_decode_text_with(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  m: PadRule,
+  codes: List(Nat),
+  l: List(Byte),
+  e: decode_text_with(a, m, codes) = Some(l)
+): EncodesTo(a, m, l, codes) {
+  Eq::subst(
+    (r: Option(List(Byte))) => TextBack(a, m, codes, r),
+    e,
+    decode_text_back(a, m, codes, codes_syms(a, codes))(codes_syms_back(a, ok, codes))
+  )
+}
+
+theorem encode_text_decode_text(
+  codes: List(Nat),
+  l: List(Byte),
+  e: decode_text(codes) = Some(l)
+): encode_text(l) = codes {
+  encode_text_with_decode_text_with(standard(), standard_ok(), PadRequired, codes, l, e)
+}

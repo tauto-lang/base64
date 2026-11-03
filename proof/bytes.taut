@@ -1,0 +1,428 @@
+import "../src/alphabet.taut"
+import "../src/codec.taut"
+import "../src/text.taut"
+import "alphabet.taut"
+import "codec.taut"
+import std::Base
+import std::Text
+import "../src/bytes.taut"
+import "text.taut"
+import std::Nat
+
+// Base64 of texts: for an alphabet that passes `alphabet_ok`, decoding the
+// encoding of a text gives it back, and a text that decodes is the encoding of
+// what it decodes to. A text's bytes are below 256 (`ByteText`).
+
+// The four bytes that start with the six bits of `s`.
+fn forall_low(f: (Byte) -> Bool, s: Sextet): Bool {
+  match s: Bool {
+    Sextet::Mk(x7, x6, x5, x4, x3, x2) => forall_bit(
+      (x1: Bit) => forall_bit((x0: Bit) => f(Byte::Mk(x7, x6, x5, x4, x3, x2, x1, x0)))
+    )
+  }
+}
+
+// `f` holds of every byte.
+fn forall_byte(f: (Byte) -> Bool): Bool {
+  forall_sextet((s: Sextet) => forall_low(f, s))
+}
+
+theorem forall_byte_at(f: (Byte) -> Bool, e: forall_byte(f) = true, b: Byte): f(b) = true {
+  match b {
+    Byte::Mk(x7, x6, x5, x4, x3, x2, x1, x0) => forall_bit_at(
+      (y0: Bit) => f(Byte::Mk(x7, x6, x5, x4, x3, x2, x1, y0)),
+      forall_bit_at(
+        (y1: Bit) => forall_bit((y0: Bit) => f(Byte::Mk(x7, x6, x5, x4, x3, x2, y1, y0))),
+        forall_sextet_at((s: Sextet) => forall_low(f, s), e, Sextet::Mk(x7, x6, x5, x4, x3, x2)),
+        x1
+      ),
+      x0
+    )
+  }
+}
+
+// A byte is read back from its number, which is below 256.
+fn byte_back(b: Byte): Bool {
+  Byte::beq(Byte::of_nat(nat_of_byte(b)), b) && Nat::lt(nat_of_byte(b), 256)
+}
+
+theorem all_byte_back(): forall_byte(byte_back) = true {
+  Refl
+}
+
+module Byte {
+  theorem of_nat_of_byte(b: Byte): Byte::of_nat(nat_of_byte(b)) = b {
+    Byte::beq_sound(
+      Byte::of_nat(nat_of_byte(b)),
+      b,
+      And::left(
+        Bool::and_split(
+          Byte::beq(Byte::of_nat(nat_of_byte(b)), b),
+          Nat::lt(nat_of_byte(b), 256),
+          forall_byte_at(byte_back, all_byte_back(), b)
+        )
+      )
+    )
+  }
+}
+
+theorem nat_of_byte_lt(b: Byte): Nat::lt(nat_of_byte(b), 256) = true {
+  And::right(
+    Bool::and_split(
+      Byte::beq(Byte::of_nat(nat_of_byte(b)), b),
+      Nat::lt(nat_of_byte(b), 256),
+      forall_byte_at(byte_back, all_byte_back(), b)
+    )
+  )
+}
+
+fn round_trips(n: Nat): Bool {
+  Nat::eq(nat_of_byte(Byte::of_nat(n)), n)
+}
+
+theorem all_round_trip(): all_from(round_trips, 256, 0) = true {
+  Refl
+}
+
+theorem nat_of_byte_of_nat(
+  n: Nat,
+  lt: Nat::lt(n, 256) = true
+): nat_of_byte(Byte::of_nat(n)) = n {
+  Nat::eq_sound(
+    nat_of_byte(Byte::of_nat(n)),
+    n,
+    Eq::subst(
+      (x: Nat) => round_trips(x) = true,
+      Nat::add_zero_left(n),
+      all_from_at(round_trips, 256, n, 0)(all_round_trip())(lt)
+    )
+  )
+}
+
+fn ByteList(l: List(Nat)): Prop {
+  match l: Prop {
+    Nil => True
+    Cons(x, t) => Nat::lt(x, 256) = true ∧ ByteList(t)
+  }
+}
+
+theorem byte_list(l: List(Nat)): (all_bytes(l) = true) -> ByteList(l) {
+  match l {
+    Nil => h => Trivial
+    Cons(x, t) => h => AndIntro(
+      And::left(Bool::and_split(Nat::lt(x, 256), all_bytes(t), h)),
+      byte_list(t)(And::right(Bool::and_split(Nat::lt(x, 256), all_bytes(t), h)))
+    )
+  }
+}
+
+theorem all_bytes_of_bytes(l: List(Byte)): all_bytes(List::map(nat_of_byte, l)) = true {
+  match l {
+    Nil => Refl
+    Cons(b, t) => Bool::and_intro(
+      Nat::lt(nat_of_byte(b), 256),
+      all_bytes(List::map(nat_of_byte, t)),
+      nat_of_byte_lt(b),
+      all_bytes_of_bytes(t)
+    )
+  }
+}
+
+theorem nats_round_trip(
+  l: List(Nat)
+): (ByteList(l)) -> List::map(nat_of_byte, List::map(Byte::of_nat, l)) = l {
+  match l {
+    Nil => h => Refl
+    Cons(
+      x,
+      t
+    ) => h => Eq::trans(
+      Eq::congr(
+        ⟦Cons(□, List::map(nat_of_byte, List::map(Byte::of_nat, t)))⟧,
+        nat_of_byte_of_nat(x, And::left(h))
+      ),
+      Eq::congr(⟦Cons(x, □)⟧, nats_round_trip(t)(And::right(h)))
+    )
+  }
+}
+
+theorem bytes_round_trip(
+  l: List(Byte)
+): List::map(Byte::of_nat, List::map(nat_of_byte, l)) = l {
+  match l {
+    Nil => Refl
+    Cons(
+      x,
+      t
+    ) => Eq::trans(
+      Eq::congr(
+        ⟦Cons(□, List::map(Byte::of_nat, List::map(nat_of_byte, t)))⟧,
+        Byte::of_nat_of_byte(x)
+      ),
+      Eq::congr(⟦Cons(x, □)⟧, bytes_round_trip(t))
+    )
+  }
+}
+
+theorem text_eta(t: Text): Text::Mk(Text::bytes(t)) = t {
+  match t {
+    Text::Mk(bs) => Refl
+  }
+}
+
+// ---- ASCII codes as text ------------------------------------------------------
+
+fn code_text_ok(c: Nat): Bool {
+  Text::beq(code_text(c), Text::Mk(Cons(c, Nil)))
+}
+
+theorem all_code_text_ok(): all_from(code_text_ok, 128, 0) = true {
+  Refl
+}
+
+theorem code_text_ascii(
+  c: Nat,
+  lt: Nat::lt(c, 128) = true
+): code_text(c) = Text::Mk(Cons(c, Nil)) {
+  Text::beq_sound(
+    code_text(c),
+    Text::Mk(Cons(c, Nil)),
+    Eq::subst(
+      (x: Nat) => code_text_ok(x) = true,
+      Nat::add_zero_left(c),
+      all_from_at(code_text_ok, 128, c, 0)(all_code_text_ok())(lt)
+    )
+  )
+}
+
+fn AsciiList(l: List(Nat)): Prop {
+  match l: Prop {
+    Nil => True
+    Cons(x, t) => Nat::lt(x, 128) = true ∧ AsciiList(t)
+  }
+}
+
+theorem text_of_codes_ascii(l: List(Nat)): (AsciiList(l)) -> text_of_codes(l) = Text::Mk(l) {
+  match l {
+    Nil => h => Refl
+    Cons(
+      c,
+      t
+    ) => h => Eq::trans(
+      Eq::congr(⟦Text::concat(□, text_of_codes(t))⟧, code_text_ascii(c, And::left(h))),
+      Eq::congr(
+        ⟦Text::concat(Text::Mk(Cons(c, Nil)), □)⟧,
+        text_of_codes_ascii(t)(And::right(h))
+      )
+    )
+  }
+}
+
+theorem syms_codes_ascii(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  l: List(Sym)
+): AsciiList(syms_codes(a, l)) {
+  match l {
+    Nil => Trivial
+    Cons(x, t) => match x {
+      Digit(s) => AndIntro(sextet_code_ascii(a, ok, s), syms_codes_ascii(a, ok, t))
+      Pad => AndIntro(Refl, syms_codes_ascii(a, ok, t))
+    }
+  }
+}
+
+theorem encoding_text(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  pm: Padding,
+  l: List(Byte)
+): text_of_codes(encode_text_with(a, pm, l)) = Text::Mk(encode_text_with(a, pm, l)) {
+  text_of_codes_ascii(encode_text_with(a, pm, l))(syms_codes_ascii(a, ok, encode_with(pm, l)))
+}
+
+// ---- decoding an encoding -----------------------------------------------------
+
+module Base64 {
+  theorem decode_with_encode_bytes_with(
+    a: Alphabet,
+    ok: alphabet_ok(a) = true,
+    m: PadRule,
+    pm: Padding,
+    h: Takes(m, pm),
+    l: List(Nat),
+    bl: all_bytes(l) = true
+  ): Base64::decode_with(a, m, Base64::encode_bytes_with(a, pm, l, bl)) = Some(l) {
+    Eq::trans(
+      Eq::congr(
+        ⟦Base64::decode_with(a, m, □)⟧,
+        encoding_text(a, ok, pm, List::map(Byte::of_nat, l))
+      ),
+      Eq::trans(
+        Eq::congr(
+          nats_of_decoded,
+          decode_text_with_encode_text_with(a, ok, m, pm, h, List::map(Byte::of_nat, l))
+        ),
+        Eq::congr(⟦Some(□)⟧, nats_round_trip(l)(byte_list(l)(bl)))
+      )
+    )
+  }
+}
+
+fn ByteText(t: Text): Prop {
+  all_bytes(Text::bytes(t)) = true
+}
+
+module Base64 {
+  theorem decode_with_encode_with(
+    a: Alphabet,
+    ok: alphabet_ok(a) = true,
+    m: PadRule,
+    pm: Padding,
+    h: Takes(m, pm),
+    t: Text,
+    bt: ByteText(t)
+  ): Base64::decode_with(a, m, Base64::encode_with(a, pm, t)) = Some(Text::bytes(t)) {
+    Base64::decode_with_encode_bytes_with(a, ok, m, pm, h, Text::bytes(t), bt)
+  }
+
+  theorem decode_encode(
+    t: Text,
+    bt: ByteText(t)
+  ): Base64::decode(Base64::encode(t)) = Some(Text::bytes(t)) {
+    Base64::decode_with_encode_with(standard(), standard_ok(), PadRequired, Padded, Trivial, t, bt)
+  }
+
+  // ---- the other direction ----------------------------------------------------
+}
+
+fn nats_text(a: Alphabet, pm: Padding, l: List(Nat)): Text {
+  text_of_codes(encode_text_with(a, pm, List::map(Byte::of_nat, l)))
+}
+
+fn NatsEncodeTo(a: Alphabet, m: PadRule, l: List(Nat), s: Text): Prop {
+  match m: Prop {
+    PadRequired => nats_text(a, Padded, l) = s
+    PadOptional => nats_text(a, Padded, l) = s ∨ nats_text(a, Unpadded, l) = s
+    PadForbidden => nats_text(a, Unpadded, l) = s
+  }
+}
+
+pub fn BytesEncodeTo(a: Alphabet, m: PadRule, l: List(Nat), ok: all_bytes(l) = true, s: Text): Prop {
+  match m: Prop {
+    PadRequired => Base64::encode_bytes_with(a, Padded, l, ok) = s
+    PadOptional => Base64::encode_bytes_with(a, Padded, l, ok) = s ∨ Base64::encode_bytes_with(a, Unpadded, l, ok) = s
+    PadForbidden => Base64::encode_bytes_with(a, Unpadded, l, ok) = s
+  }
+}
+
+fn DecodedBytes(r: Option(List(Nat))): Prop {
+  match r: Prop {
+    None => True
+    Some(l) => all_bytes(l) = true
+  }
+}
+
+theorem decoded_bytes(r: Option(List(Byte))): DecodedBytes(nats_of_decoded(r)) {
+  match r {
+    None => Trivial
+    Some(bs) => all_bytes_of_bytes(bs)
+  }
+}
+
+fn DecodedBack(a: Alphabet, m: PadRule, s: Text, r: Option(List(Nat))): Prop {
+  match r: Prop {
+    None => True
+    Some(l) => NatsEncodeTo(a, m, l, s)
+  }
+}
+
+theorem encodes_text(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  pm: Padding,
+  l: List(Byte),
+  s: Text,
+  k: encode_text_with(a, pm, l) = Text::bytes(s)
+): nats_text(a, pm, List::map(nat_of_byte, l)) = s {
+  Eq::trans(
+    Eq::congr(⟦text_of_codes(encode_text_with(a, pm, □))⟧, bytes_round_trip(l)),
+    Eq::trans(encoding_text(a, ok, pm, l), Eq::trans(Eq::congr(⟦Text::Mk(□)⟧, k), text_eta(s)))
+  )
+}
+
+theorem decoded_back(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  m: PadRule,
+  s: Text,
+  r: Option(List(Byte))
+): (TextBack(a, m, Text::bytes(s), r)) -> DecodedBack(a, m, s, nats_of_decoded(r)) {
+  match r {
+    None => k => Trivial
+    Some(l) => match m {
+      PadRequired => k => encodes_text(a, ok, Padded, l, s, k)
+      PadForbidden => k => encodes_text(a, ok, Unpadded, l, s, k)
+      PadOptional => k => Or::elim(
+        k,
+        (
+          p: encode_text_with(a, Padded, l) = Text::bytes(s)
+        ) => OrInl(encodes_text(a, ok, Padded, l, s, p)),
+        (
+          q: encode_text_with(a, Unpadded, l) = Text::bytes(s)
+        ) => OrInr(encodes_text(a, ok, Unpadded, l, s, q))
+      )
+    }
+  }
+}
+
+module Base64 {
+  // What a text decodes to is bytes.
+  theorem decode_with_bytes(
+    a: Alphabet,
+    m: PadRule,
+    s: Text,
+    l: List(Nat),
+    e: Base64::decode_with(a, m, s) = Some(l)
+  ): all_bytes(l) = true {
+    Eq::subst(DecodedBytes, e, decoded_bytes(decode_text_with(a, m, Text::bytes(s))))
+  }
+
+  // A text that decodes is the encoding, in a form the rule takes, of what it
+  // decodes to: with `PadRequired` or `PadForbidden`, the only text that does.
+  theorem encode_bytes_with_decode_with(
+    a: Alphabet,
+    ok: alphabet_ok(a) = true,
+    m: PadRule,
+    s: Text,
+    l: List(Nat),
+    e: Base64::decode_with(a, m, s) = Some(l)
+  ): BytesEncodeTo(a, m, l, Base64::decode_with_bytes(a, m, s, l, e), s) {
+    Eq::subst(
+      (r: Option(List(Nat))) => DecodedBack(a, m, s, r),
+      e,
+      decoded_back(
+        a,
+        ok,
+        m,
+        s,
+        decode_text_with(a, m, Text::bytes(s))
+      )(
+        decode_text_back(
+          a,
+          m,
+          Text::bytes(s),
+          codes_syms(a, Text::bytes(s))
+        )(codes_syms_back(a, ok, Text::bytes(s)))
+      )
+    )
+  }
+
+  theorem encode_bytes_decode(
+    s: Text,
+    l: List(Nat),
+    e: Base64::decode(s) = Some(l)
+  ): Base64::encode_bytes(l, Base64::decode_with_bytes(standard(), PadRequired, s, l, e)) = s {
+    Base64::encode_bytes_with_decode_with(standard(), standard_ok(), PadRequired, s, l, e)
+  }
+}

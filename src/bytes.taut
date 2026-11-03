@@ -1,0 +1,132 @@
+import "alphabet.taut"
+import "codec.taut"
+import std::Base
+import std::Text
+import "text.taut"
+
+// Base64 for programs: bytes (numbers below 256) or the bytes of a `Text` to
+// an ASCII `Text`, and a `Text` back to bytes.
+// A byte is a number below 256; `Byte::of_nat` and `nat_of_byte` go between
+// numbers and the bits that `codec.taut` works on.
+
+module Byte {
+  // The lowest 8 bits of `n`.
+  pub fn of_nat(n: Nat): Byte {
+    Byte::Mk(
+      bit_of(Nat::div_nz(n, 128, Nat::succ_ne_zero(127))),
+      bit_of(Nat::div_nz(n, 64, Nat::succ_ne_zero(63))),
+      bit_of(Nat::div_nz(n, 32, Nat::succ_ne_zero(31))),
+      bit_of(Nat::div_nz(n, 16, Nat::succ_ne_zero(15))),
+      bit_of(Nat::div_nz(n, 8, Nat::succ_ne_zero(7))),
+      bit_of(Nat::div_nz(n, 4, Nat::succ_ne_zero(3))),
+      bit_of(Nat::div_nz(n, 2, Nat::succ_ne_zero(1))),
+      bit_of(n)
+    )
+  }
+}
+
+pub fn nat_of_byte(b: Byte): Nat {
+  match b: Nat {
+    Byte::Mk(
+      x7,
+      x6,
+      x5,
+      x4,
+      x3,
+      x2,
+      x1,
+      x0
+    ) => bit_push(
+      bit_push(
+        bit_push(bit_push(bit_push(bit_push(bit_push(bit_nat(x7), x6), x5), x4), x3), x2),
+        x1
+      ),
+      x0
+    )
+  }
+}
+
+pub fn code_text(c: Nat): Text {
+  match Text::of_code_point(c): Text {
+    None => ""
+    Some(t) => t
+  }
+}
+
+// ASCII codes as a text.
+pub fn text_of_codes(l: List(Nat)): Text {
+  Text::concat_all(List::map(code_text, l))
+}
+
+pub fn nats_of_decoded(o: Option(List(Byte))): Option(List(Nat)) {
+  match o: Option(List(Nat)) {
+    None => None
+    Some(l) => Some(List::map(nat_of_byte, l))
+  }
+}
+
+// Whether every number in `l` is a byte (below 256).
+pub fn all_bytes(l: List(Nat)): Bool {
+  match l: Bool {
+    Nil => true
+    Cons(x, t) => Nat::lt(x, 256) && all_bytes(t)
+  }
+}
+
+// Numbers to `Text`; a number of 256 or more would be cut to its low 8 bits,
+// so the public entry points check or require that every number is a byte.
+fn encode_nats_with(a: Alphabet, pm: Padding, l: List(Nat)): Text {
+  text_of_codes(encode_text_with(a, pm, List::map(Byte::of_nat, l)))
+}
+
+// The number `n` at position `at` (from 0) of the input is not a byte.
+pub(open) effect not_a_byte(at: Nat, n: Nat): Never resume 0
+
+fn check_bytes(l: List(Nat), i: Nat): Bool ! {not_a_byte} {
+  match l {
+    Nil => true
+    Cons(x, t) => if Nat::lt(x, 256) { check_bytes(t, Succ(i)) } else { perform not_a_byte(i, x) }
+  }
+}
+
+module Base64 {
+  // Bytes to text, given that every number is a byte; for a list known when
+  // writing, `Refl` shows `all_bytes(l) = true`.
+  pub fn encode_bytes_with(a: Alphabet, pm: Padding, l: List(Nat), ok: all_bytes(l) = true): Text {
+    encode_nats_with(a, pm, l)
+  }
+
+  // Bytes to text; at the first number that is not a byte, `not_a_byte`
+  // with its position and value.
+  pub fn encode_bytes_checked_with(a: Alphabet, pm: Padding, l: List(Nat)): Text ! {not_a_byte} {
+    check_bytes(l, 0)
+    encode_nats_with(a, pm, l)
+  }
+
+  // The bytes of a text are below 256.
+  pub fn encode_with(a: Alphabet, pm: Padding, t: Text): Text {
+    encode_nats_with(a, pm, Text::bytes(t))
+  }
+
+  // The decoded bytes, which need not be UTF-8.
+  pub fn decode_with(a: Alphabet, m: PadRule, t: Text): Option(List(Nat)) {
+    nats_of_decoded(decode_text_with(a, m, Text::bytes(t)))
+  }
+
+  // RFC 4648 section 4, padded.
+  pub fn encode_bytes(l: List(Nat), ok: all_bytes(l) = true): Text {
+    Base64::encode_bytes_with(standard(), Padded, l, ok)
+  }
+
+  pub fn encode_bytes_checked(l: List(Nat)): Text ! {not_a_byte} {
+    Base64::encode_bytes_checked_with(standard(), Padded, l)
+  }
+
+  pub fn encode(t: Text): Text {
+    Base64::encode_with(standard(), Padded, t)
+  }
+
+  pub fn decode(t: Text): Option(List(Nat)) {
+    Base64::decode_with(standard(), PadRequired, t)
+  }
+}

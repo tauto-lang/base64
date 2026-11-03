@@ -1,0 +1,443 @@
+import "../src/codec.taut"
+import std::Base
+import std::Array
+import "../src/alphabet.taut"
+import std::Nat
+
+// For an alphabet that passes `alphabet_ok`, a sextet is read back from its
+// code, a code reads as the sextet whose code it is, and `=` is not a code.
+
+fn is_sextet(o: Option(Sextet), s: Sextet): Bool {
+  match o: Bool {
+    None => false
+    Some(x) => Sextet::beq(x, s)
+  }
+}
+
+fn is_none(o: Option(Sextet)): Bool {
+  match o: Bool {
+    None => true
+    Some(x) => false
+  }
+}
+
+pub fn forall_bit(f: (Bit) -> Bool): Bool {
+  f(Bit0) && f(Bit1)
+}
+
+pub fn forall_sextet(f: (Sextet) -> Bool): Bool {
+  forall_bit(
+    (
+      x5: Bit
+    ) => forall_bit(
+      (
+        x4: Bit
+      ) => forall_bit(
+        (
+          x3: Bit
+        ) => forall_bit(
+          (
+            x2: Bit
+          ) => forall_bit((x1: Bit) => forall_bit((x0: Bit) => f(Sextet::Mk(x5, x4, x3, x2, x1, x0))))
+        )
+      )
+    )
+  )
+}
+
+fn reads_back(a: Alphabet, s: Sextet): Bool {
+  is_sextet(code_sextet(a, sextet_code(a, s)), s)
+}
+
+fn reads_ok(a: Alphabet): Bool {
+  forall_sextet((s: Sextet) => reads_back(a, s)) && is_none(code_sextet(a, 61))
+}
+
+// `f` holds of `i`, `i + 1`, …, `i + n - 1`.
+pub fn all_from(f: (Nat) -> Bool, n: Nat, i: Nat): Bool {
+  match n: Bool {
+    Zero => true
+    Succ(k) => f(i) && all_from(f, k, Succ(i))
+  }
+}
+
+// A code reads as nothing or as a sextet whose code it is.
+fn back_yn(a: Alphabet, c: Nat, o: Option(Sextet)): Bool {
+  match o: Bool {
+    None => true
+    Some(s) => Nat::eq(sextet_code(a, s), c)
+  }
+}
+
+fn back_at(a: Alphabet, c: Nat): Bool {
+  back_yn(a, c, code_sextet(a, c))
+}
+
+// So for the ASCII codes, and the table has nothing past them.
+fn back_ok(a: Alphabet): Bool {
+  all_from((c: Nat) => back_at(a, c), 128, 0) && Nat::eq(Array::len(alphabet_table(a)), 128)
+}
+
+// Every character is ASCII, so an encoding is plain ASCII text.
+fn ascii_ok(a: Alphabet): Bool {
+  forall_sextet((s: Sextet) => Nat::lt(sextet_code(a, s), 128))
+}
+
+fn length_ok(a: Alphabet): Bool {
+  Nat::eq(List::length(alphabet_codes(a)), 64)
+}
+
+pub fn alphabet_ok(a: Alphabet): Bool {
+  reads_ok(a) && (back_ok(a) && (ascii_ok(a) && length_ok(a)))
+}
+
+theorem ok_reads(a: Alphabet, ok: alphabet_ok(a) = true): reads_ok(a) = true {
+  And::left(Bool::and_split(reads_ok(a), back_ok(a) && (ascii_ok(a) && length_ok(a)), ok))
+}
+
+theorem ok_rest(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true
+): Bool::and(back_ok(a), ascii_ok(a) && length_ok(a)) = true {
+  And::right(Bool::and_split(reads_ok(a), back_ok(a) && (ascii_ok(a) && length_ok(a)), ok))
+}
+
+theorem ok_back(a: Alphabet, ok: alphabet_ok(a) = true): back_ok(a) = true {
+  And::left(Bool::and_split(back_ok(a), ascii_ok(a) && length_ok(a), ok_rest(a, ok)))
+}
+
+theorem ok_ascii(a: Alphabet, ok: alphabet_ok(a) = true): ascii_ok(a) = true {
+  And::left(
+    Bool::and_split(
+      ascii_ok(a),
+      length_ok(a),
+      And::right(Bool::and_split(back_ok(a), ascii_ok(a) && length_ok(a), ok_rest(a, ok)))
+    )
+  )
+}
+
+pub theorem forall_bit_at(f: (Bit) -> Bool, e: forall_bit(f) = true, b: Bit): f(b) = true {
+  match b {
+    Bit0 => And::left(Bool::and_split(f(Bit0), f(Bit1), e))
+    Bit1 => And::right(Bool::and_split(f(Bit0), f(Bit1), e))
+  }
+}
+
+pub theorem forall_sextet_at(
+  f: (Sextet) -> Bool,
+  e: forall_sextet(f) = true,
+  s: Sextet
+): f(s) = true {
+  match s {
+    Sextet::Mk(
+      x5,
+      x4,
+      x3,
+      x2,
+      x1,
+      x0
+    ) => forall_bit_at(
+      (y0: Bit) => f(Sextet::Mk(x5, x4, x3, x2, x1, y0)),
+      forall_bit_at(
+        (y1: Bit) => forall_bit((y0: Bit) => f(Sextet::Mk(x5, x4, x3, x2, y1, y0))),
+        forall_bit_at(
+          (
+            y2: Bit
+          ) => forall_bit((y1: Bit) => forall_bit((y0: Bit) => f(Sextet::Mk(x5, x4, x3, y2, y1, y0)))),
+          forall_bit_at(
+            (
+              y3: Bit
+            ) => forall_bit(
+              (
+                y2: Bit
+              ) => forall_bit(
+                (y1: Bit) => forall_bit((y0: Bit) => f(Sextet::Mk(x5, x4, y3, y2, y1, y0)))
+              )
+            ),
+            forall_bit_at(
+              (
+                y4: Bit
+              ) => forall_bit(
+                (
+                  y3: Bit
+                ) => forall_bit(
+                  (
+                    y2: Bit
+                  ) => forall_bit(
+                    (y1: Bit) => forall_bit((y0: Bit) => f(Sextet::Mk(x5, y4, y3, y2, y1, y0)))
+                  )
+                )
+              ),
+              forall_bit_at(
+                (
+                  y5: Bit
+                ) => forall_bit(
+                  (
+                    y4: Bit
+                  ) => forall_bit(
+                    (
+                      y3: Bit
+                    ) => forall_bit(
+                      (
+                        y2: Bit
+                      ) => forall_bit(
+                        (y1: Bit) => forall_bit((y0: Bit) => f(Sextet::Mk(y5, y4, y3, y2, y1, y0)))
+                      )
+                    )
+                  )
+                ),
+                e,
+                x5
+              ),
+              x4
+            ),
+            x3
+          ),
+          x2
+        ),
+        x1
+      ),
+      x0
+    )
+  }
+}
+
+theorem is_sextet_sound(
+  o: Option(Sextet),
+  s: Sextet
+): (is_sextet(o, s) = true) -> o = Some(s) {
+  match o {
+    None => e => False::elim(false_ne_true(e))
+    Some(x) => e => Eq::congr(⟦Some(□)⟧, Sextet::beq_sound(x, s, e))
+  }
+}
+
+theorem is_none_sound(o: Option(Sextet)): (is_none(o) = true) -> o = None {
+  match o {
+    None => e => Refl
+    Some(x) => e => False::elim(false_ne_true(e))
+  }
+}
+
+pub theorem code_sextet_code(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  s: Sextet
+): code_sextet(a, sextet_code(a, s)) = Some(s) {
+  is_sextet_sound(
+    code_sextet(a, sextet_code(a, s)),
+    s
+  )(
+    forall_sextet_at(
+      (x: Sextet) => reads_back(a, x),
+      And::left(
+        Bool::and_split(
+          forall_sextet((x: Sextet) => reads_back(a, x)),
+          is_none(code_sextet(a, 61)),
+          ok_reads(a, ok)
+        )
+      ),
+      s
+    )
+  )
+}
+
+pub theorem code_sextet_pad(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true
+): code_sextet(a, 61) = None {
+  is_none_sound(
+    code_sextet(a, 61)
+  )(
+    And::right(
+      Bool::and_split(
+        forall_sextet((x: Sextet) => reads_back(a, x)),
+        is_none(code_sextet(a, 61)),
+        ok_reads(a, ok)
+      )
+    )
+  )
+}
+
+// What a code reads as, if anything, has that code.
+pub fn SextetBack(a: Alphabet, c: Nat, o: Option(Sextet)): Prop {
+  match o: Prop {
+    None => True
+    Some(s) => sextet_code(a, s) = c
+  }
+}
+
+pub theorem all_from_at(
+  f: (Nat) -> Bool,
+  n: Nat,
+  j: Nat,
+  i: Nat
+): (all_from(f, n, i) = true) -> (Nat::lt(j, n) = true) -> f(Nat::add(i, j)) = true {
+  match n {
+    Zero => match j {
+      Zero => e => lt => False::elim(false_ne_true(lt))
+      Succ(j2) => e => lt => False::elim(false_ne_true(lt))
+    }
+    Succ(k) => match j {
+      Zero => e => lt => And::left(Bool::and_split(f(i), all_from(f, k, Succ(i)), e))
+      Succ(
+        j2
+      ) => e => lt => Eq::subst(
+        (x: Nat) => f(x) = true,
+        Nat::add_succ_left(i, j2),
+        all_from_at(
+          f,
+          k,
+          j2,
+          Succ(i)
+        )(And::right(Bool::and_split(f(i), all_from(f, k, Succ(i)), e)))(lt)
+      )
+    }
+  }
+}
+
+theorem all_from_zero(
+  f: (Nat) -> Bool,
+  n: Nat,
+  j: Nat,
+  e: all_from(f, n, 0) = true,
+  lt: Nat::lt(j, n) = true
+): f(j) = true {
+  Eq::subst((x: Nat) => f(x) = true, Nat::add_zero_left(j), all_from_at(f, n, j, 0)(e)(lt))
+}
+
+theorem back_at_sound(
+  a: Alphabet,
+  c: Nat,
+  o: Option(Sextet)
+): (back_yn(a, c, o) = true) -> SextetBack(a, c, o) {
+  match o {
+    None => e => Trivial
+    Some(s) => e => Nat::eq_sound(sextet_code(a, s), c, e)
+  }
+}
+
+theorem nth_past_end(
+  l: List(Option(Sextet)),
+  i: Nat
+): (Nat::lt(i, List::length(l)) = false) -> List::nth(l, i) = None {
+  match l {
+    Nil => e => Refl
+    Cons(h, t) => match i {
+      Zero => e => False::elim(true_ne_false(e))
+      Succ(k) => e => nth_past_end(t, k)(e)
+    }
+  }
+}
+
+theorem past_table(
+  a: Alphabet,
+  c: Nat,
+  len: Array::len(alphabet_table(a)) = 128
+): (Nat::lt(c, 128) = false) -> SextetBack(a, c, code_sextet(a, c)) {
+  e => Eq::subst(
+    (o: Option(Option(Sextet))) => SextetBack(a, c, table_entry(o)),
+    Eq::sym(
+      nth_past_end(
+        Array::to_list(alphabet_table(a)),
+        c
+      )(Eq::subst((n: Nat) => Nat::lt(c, n) = false, Eq::sym(len), e))
+    ),
+    Trivial
+  )
+}
+
+theorem code_sextet_back_at(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  c: Nat,
+  z: Bool
+): (Nat::lt(c, 128) = z) -> SextetBack(a, c, code_sextet(a, c)) {
+  match z {
+    true => e => back_at_sound(
+      a,
+      c,
+      code_sextet(a, c)
+    )(
+      all_from_zero(
+        (x: Nat) => back_at(a, x),
+        128,
+        c,
+        And::left(
+          Bool::and_split(
+            all_from((x: Nat) => back_at(a, x), 128, 0),
+            Nat::eq(Array::len(alphabet_table(a)), 128),
+            ok_back(a, ok)
+          )
+        ),
+        e
+      )
+    )
+    false => e => past_table(
+      a,
+      c,
+      Nat::eq_sound(
+        Array::len(alphabet_table(a)),
+        128,
+        And::right(
+          Bool::and_split(
+            all_from((x: Nat) => back_at(a, x), 128, 0),
+            Nat::eq(Array::len(alphabet_table(a)), 128),
+            ok_back(a, ok)
+          )
+        )
+      )
+    )(e)
+  }
+}
+
+pub theorem code_sextet_back(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  c: Nat
+): SextetBack(a, c, code_sextet(a, c)) {
+  code_sextet_back_at(a, ok, c, Nat::lt(c, 128))(Refl)
+}
+
+theorem code_sextet_sound(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  c: Nat,
+  s: Sextet,
+  e: code_sextet(a, c) = Some(s)
+): sextet_code(a, s) = c {
+  Eq::subst((o: Option(Sextet)) => SextetBack(a, c, o), e, code_sextet_back(a, ok, c))
+}
+
+pub theorem sextet_code_ascii(
+  a: Alphabet,
+  ok: alphabet_ok(a) = true,
+  s: Sextet
+): Nat::lt(sextet_code(a, s), 128) = true {
+  forall_sextet_at((x: Sextet) => Nat::lt(sextet_code(a, x), 128), ok_ascii(a, ok), s)
+}
+
+// The alphabets given here pass.
+pub theorem standard_ok(): alphabet_ok(standard()) = true {
+  Refl
+}
+
+theorem url_safe_ok(): alphabet_ok(url_safe()) = true {
+  Refl
+}
+
+theorem crypt_ok(): alphabet_ok(crypt()) = true {
+  Refl
+}
+
+theorem bcrypt_ok(): alphabet_ok(bcrypt()) = true {
+  Refl
+}
+
+theorem imap_mutf7_ok(): alphabet_ok(imap_mutf7()) = true {
+  Refl
+}
+
+theorem bin_hex_ok(): alphabet_ok(bin_hex()) = true {
+  Refl
+}

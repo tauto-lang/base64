@@ -1,0 +1,442 @@
+import "../src/codec.taut"
+import std::Base
+
+// Decoding an encoding gives back the bytes, for every padding the decoder
+// takes; and an input that decodes is the encoding of what it decodes to.
+
+fn pending_bytes(p: Carry, l: List(Byte)): List(Byte) {
+  match p: List(Byte) {
+    Empty => l
+    One(a) => Cons(a, l)
+    Two(a, b) => Cons(a, Cons(b, l))
+  }
+}
+
+// The paddings a decoder rule takes.
+pub fn Takes(m: PadRule, pm: Padding): Prop {
+  match m: Prop {
+    PadRequired => match pm: Prop {
+      Padded => True
+      Unpadded => False
+    }
+    PadOptional => True
+    PadForbidden => match pm: Prop {
+      Padded => False
+      Unpadded => True
+    }
+  }
+}
+
+theorem dec_enc_one(
+  m: PadRule,
+  pm: Padding,
+  a: Byte
+): (
+  Takes(m, pm)
+) -> decode_from(m, encode_from(pm, Nil, One(a)), Got0) = Some(Cons(a, Nil)) {
+  match a {
+    Byte::Mk(a7, a6, a5, a4, a3, a2, a1, a0) => match m {
+      PadRequired => match pm {
+        Padded => h => Refl
+        Unpadded => h => False::elim(h)
+      }
+      PadOptional => match pm {
+        Padded => h => Refl
+        Unpadded => h => Refl
+      }
+      PadForbidden => match pm {
+        Padded => h => False::elim(h)
+        Unpadded => h => Refl
+      }
+    }
+  }
+}
+
+theorem dec_enc_two(
+  m: PadRule,
+  pm: Padding,
+  a: Byte,
+  b: Byte
+): (
+  Takes(m, pm)
+) -> decode_from(m, encode_from(pm, Nil, Two(a, b)), Got0) = Some(Cons(a, Cons(b, Nil))) {
+  match a {
+    Byte::Mk(a7, a6, a5, a4, a3, a2, a1, a0) => match b {
+      Byte::Mk(b7, b6, b5, b4, b3, b2, b1, b0) => match m {
+        PadRequired => match pm {
+          Padded => h => Refl
+          Unpadded => h => False::elim(h)
+        }
+        PadOptional => match pm {
+          Padded => h => Refl
+          Unpadded => h => Refl
+        }
+        PadForbidden => match pm {
+          Padded => h => False::elim(h)
+          Unpadded => h => Refl
+        }
+      }
+    }
+  }
+}
+
+theorem dec_enc_go(
+  m: PadRule,
+  pm: Padding,
+  h: Takes(m, pm),
+  l: List(Byte),
+  p: Carry
+): decode_from(m, encode_from(pm, l, p), Got0) = Some(pending_bytes(p, l)) {
+  match l {
+    Nil => match p {
+      Empty => Refl
+      One(a) => dec_enc_one(m, pm, a)(h)
+      Two(a, b) => dec_enc_two(m, pm, a, b)(h)
+    }
+    Cons(x, t) => match p {
+      Empty => dec_enc_go(m, pm, h, t, One(x))
+      One(a) => dec_enc_go(m, pm, h, t, Two(a, x))
+      Two(a, b) => match a {
+        Byte::Mk(a7, a6, a5, a4, a3, a2, a1, a0) => match b {
+          Byte::Mk(b7, b6, b5, b4, b3, b2, b1, b0) => match x {
+            Byte::Mk(
+              c7,
+              c6,
+              c5,
+              c4,
+              c3,
+              c2,
+              c1,
+              c0
+            ) => Eq::congr(
+              ⟦prepend3(
+                Byte::Mk(a7, a6, a5, a4, a3, a2, a1, a0),
+                Byte::Mk(b7, b6, b5, b4, b3, b2, b1, b0),
+                Byte::Mk(c7, c6, c5, c4, c3, c2, c1, c0),
+                □
+              )⟧,
+              dec_enc_go(m, pm, h, t, Empty)
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+pub theorem decode_with_encode_with(
+  m: PadRule,
+  pm: Padding,
+  h: Takes(m, pm),
+  l: List(Byte)
+): decode_with(m, encode_with(pm, l)) = Some(l) {
+  dec_enc_go(m, pm, h, l, Empty)
+}
+
+theorem decode_encode(l: List(Byte)): decode(encode(l)) = Some(l) {
+  decode_with_encode_with(PadRequired, Padded, Trivial, l)
+}
+
+// ---- the other direction ----------------------------------------------------
+
+// The padding an input is written in: padded once a pad is seen; otherwise
+// what the rule assumes of a whole input with no pads (both forms agree on it).
+fn rule_unpadded(m: PadRule): Padding {
+  match m: Padding {
+    PadRequired => Padded
+    PadOptional => Unpadded
+    PadForbidden => Unpadded
+  }
+}
+
+fn rule_padded(m: PadRule): Padding {
+  match m: Padding {
+    PadRequired => Padded
+    PadOptional => Padded
+    PadForbidden => Unpadded
+  }
+}
+
+pub fn written_in(m: PadRule, s: List(Sym)): Padding {
+  match s: Padding {
+    Nil => rule_unpadded(m)
+    Cons(x, t) => match x: Padding {
+      Digit(d) => written_in(m, t)
+      Pad => rule_padded(m)
+    }
+  }
+}
+
+fn wait_syms(w: Got): List(Sym) {
+  match w: List(Sym) {
+    Got0 => Nil
+    Got1(s1) => Cons(Digit(s1), Nil)
+    Got2(s1, s2) => Cons(Digit(s1), Cons(Digit(s2), Nil))
+    Got3(s1, s2, s3) => Cons(Digit(s1), Cons(Digit(s2), Cons(Digit(s3), Nil)))
+  }
+}
+
+// A decoding `o`, if there is one, encodes in `pm` to `s`.
+pub fn EncodesBack(o: Option(List(Byte)), pm: Padding, s: List(Sym)): Prop {
+  match o: Prop {
+    None => True
+    Some(l) => encode_with(pm, l) = s
+  }
+}
+
+theorem fin2_back(
+  pm: Padding,
+  s1: Sextet,
+  s2: Sextet
+): EncodesBack(
+  final_one_byte(s1, s2),
+  pm,
+  Cons(Digit(s1), Cons(Digit(s2), pad_tail(pm, Cons(Pad, Cons(Pad, Nil)))))
+) {
+  match s1 {
+    Sextet::Mk(a7, a6, a5, a4, a3, a2) => match s2 {
+      Sextet::Mk(a1, a0, z3, z2, z1, z0) => match z3 {
+        Bit1 => Trivial
+        Bit0 => match z2 {
+          Bit1 => Trivial
+          Bit0 => match z1 {
+            Bit1 => Trivial
+            Bit0 => match z0 {
+              Bit1 => Trivial
+              Bit0 => Refl
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+theorem fin3_back(
+  pm: Padding,
+  s1: Sextet,
+  s2: Sextet,
+  s3: Sextet
+): EncodesBack(
+  final_two_bytes(s1, s2, s3),
+  pm,
+  Cons(Digit(s1), Cons(Digit(s2), Cons(Digit(s3), pad_tail(pm, Cons(Pad, Nil)))))
+) {
+  match s1 {
+    Sextet::Mk(a7, a6, a5, a4, a3, a2) => match s2 {
+      Sextet::Mk(a1, a0, b7, b6, b5, b4) => match s3 {
+        Sextet::Mk(b3, b2, b1, b0, z1, z0) => match z1 {
+          Bit1 => Trivial
+          Bit0 => match z0 {
+            Bit1 => Trivial
+            Bit0 => Refl
+          }
+        }
+      }
+    }
+  }
+}
+
+theorem dec4_back(
+  pm: Padding,
+  s1: Sextet,
+  s2: Sextet,
+  s3: Sextet,
+  s4: Sextet,
+  t: List(Sym),
+  o: Option(List(Byte))
+): (
+  EncodesBack(o, pm, t)
+) -> EncodesBack(
+  decode_group(s1, s2, s3, s4, o),
+  pm,
+  Cons(Digit(s1), Cons(Digit(s2), Cons(Digit(s3), Cons(Digit(s4), t))))
+) {
+  match s1 {
+    Sextet::Mk(a7, a6, a5, a4, a3, a2) => match s2 {
+      Sextet::Mk(a1, a0, b7, b6, b5, b4) => match s3 {
+        Sextet::Mk(b3, b2, b1, b0, c7, c6) => match s4 {
+          Sextet::Mk(c5, c4, c3, c2, c1, c0) => match o {
+            None => h => Trivial
+            Some(
+              r
+            ) => h => Eq::congr(
+              ⟦Cons(
+                Digit(Sextet::Mk(a7, a6, a5, a4, a3, a2)),
+                Cons(
+                  Digit(Sextet::Mk(a1, a0, b7, b6, b5, b4)),
+                  Cons(
+                    Digit(Sextet::Mk(b3, b2, b1, b0, c7, c6)),
+                    Cons(Digit(Sextet::Mk(c5, c4, c3, c2, c1, c0)), □)
+                  )
+                )
+              )⟧,
+              h
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+theorem last_pad_back(
+  s1: Sextet,
+  s2: Sextet,
+  t: List(Sym)
+): EncodesBack(last_pad(t, final_one_byte(s1, s2)), Padded, Cons(Digit(s1), Cons(Digit(s2), Cons(Pad, t)))) {
+  match t {
+    Nil => Trivial
+    Cons(y, u) => match y {
+      Digit(d) => Trivial
+      Pad => match u {
+        Nil => fin2_back(Padded, s1, s2)
+        Cons(v, r) => Trivial
+      }
+    }
+  }
+}
+
+theorem at_end_back(
+  s1: Sextet,
+  s2: Sextet,
+  s3: Sextet,
+  t: List(Sym)
+): EncodesBack(
+  at_end(t, final_two_bytes(s1, s2, s3)),
+  Padded,
+  Cons(Digit(s1), Cons(Digit(s2), Cons(Digit(s3), Cons(Pad, t))))
+) {
+  match t {
+    Nil => fin3_back(Padded, s1, s2, s3)
+    Cons(y, u) => Trivial
+  }
+}
+
+pub theorem dec_back_go(
+  m: PadRule,
+  s: List(Sym),
+  w: Got
+): EncodesBack(decode_from(m, s, w), written_in(m, s), List::append(wait_syms(w), s)) {
+  match s {
+    Nil => match w {
+      Got0 => Refl
+      Got1(s1) => Trivial
+      Got2(s1, s2) => match m {
+        PadRequired => Trivial
+        PadOptional => fin2_back(Unpadded, s1, s2)
+        PadForbidden => fin2_back(Unpadded, s1, s2)
+      }
+      Got3(s1, s2, s3) => match m {
+        PadRequired => Trivial
+        PadOptional => fin3_back(Unpadded, s1, s2, s3)
+        PadForbidden => fin3_back(Unpadded, s1, s2, s3)
+      }
+    }
+    Cons(x, t) => match x {
+      Digit(d) => match w {
+        Got0 => dec_back_go(m, t, Got1(d))
+        Got1(s1) => dec_back_go(m, t, Got2(s1, d))
+        Got2(s1, s2) => dec_back_go(m, t, Got3(s1, s2, d))
+        Got3(
+          s1,
+          s2,
+          s3
+        ) => dec4_back(written_in(m, t), s1, s2, s3, d, t, decode_from(m, t, Got0))(dec_back_go(m, t, Got0))
+      }
+      Pad => match w {
+        Got0 => Trivial
+        Got1(s1) => Trivial
+        Got2(s1, s2) => match m {
+          PadForbidden => Trivial
+          PadRequired => last_pad_back(s1, s2, t)
+          PadOptional => last_pad_back(s1, s2, t)
+        }
+        Got3(s1, s2, s3) => match m {
+          PadForbidden => Trivial
+          PadRequired => at_end_back(s1, s2, s3, t)
+          PadOptional => at_end_back(s1, s2, s3, t)
+        }
+      }
+    }
+  }
+}
+
+pub theorem written_in_required(s: List(Sym)): written_in(PadRequired, s) = Padded {
+  match s {
+    Nil => Refl
+    Cons(x, t) => match x {
+      Digit(d) => written_in_required(t)
+      Pad => Refl
+    }
+  }
+}
+
+pub theorem written_in_forbidden(s: List(Sym)): written_in(PadForbidden, s) = Unpadded {
+  match s {
+    Nil => Refl
+    Cons(x, t) => match x {
+      Digit(d) => written_in_forbidden(t)
+      Pad => Refl
+    }
+  }
+}
+
+// An input that decodes is the encoding, in the padding it is written in, of
+// what it decodes to.
+theorem encode_with_decode_with(
+  m: PadRule,
+  s: List(Sym),
+  l: List(Byte),
+  e: decode_with(m, s) = Some(l)
+): encode_with(written_in(m, s), l) = s {
+  Eq::subst((o: Option(List(Byte))) => EncodesBack(o, written_in(m, s), s), e, dec_back_go(m, s, Got0))
+}
+
+// So a decoder that requires the pads, or forbids them, takes exactly one
+// input for each byte list: the canonical encoding.
+theorem encode_decode(
+  s: List(Sym),
+  l: List(Byte),
+  e: decode(s) = Some(l)
+): encode(l) = s {
+  Eq::subst(
+    (pm: Padding) => encode_with(pm, l) = s,
+    written_in_required(s),
+    encode_with_decode_with(PadRequired, s, l, e)
+  )
+}
+
+theorem encode_unpadded_decode_forbidden(
+  s: List(Sym),
+  l: List(Byte),
+  e: decode_with(PadForbidden, s) = Some(l)
+): encode_with(Unpadded, l) = s {
+  Eq::subst(
+    (pm: Padding) => encode_with(pm, l) = s,
+    written_in_forbidden(s),
+    encode_with_decode_with(PadForbidden, s, l, e)
+  )
+}
+
+pub theorem padding_or(
+  pm: Padding,
+  l: List(Byte),
+  s: List(Sym)
+): (
+  encode_with(pm, l) = s
+) -> (encode_with(Padded, l) = s ∨ encode_with(Unpadded, l) = s) {
+  match pm {
+    Padded => h => OrInl(h)
+    Unpadded => h => OrInr(h)
+  }
+}
+
+// A decoder that takes either form takes only the two encodings.
+theorem encode_decode_optional(
+  s: List(Sym),
+  l: List(Byte),
+  e: decode_with(PadOptional, s) = Some(l)
+): encode_with(Padded, l) = s ∨ encode_with(Unpadded, l) = s {
+  padding_or(written_in(PadOptional, s), l, s, encode_with_decode_with(PadOptional, s, l, e))
+}

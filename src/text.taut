@@ -1,0 +1,70 @@
+import "codec.taut"
+import "alphabet.taut"
+
+// Encoded text as a list of ASCII codes, in a given alphabet.
+
+pub fn sym_code(a: Alphabet, x: Sym): Nat {
+  match x: Nat {
+    Digit(s) => sextet_code(a, s)
+    Pad => 61
+  }
+}
+
+pub fn digit_or_pad(o: Option(Sextet), c: Nat): Option(Sym) {
+  match o: Option(Sym) {
+    None => if Nat::eq(c, 61) { Some(Pad) } else { None }
+    Some(s) => Some(Digit(s))
+  }
+}
+
+pub fn code_sym(a: Alphabet, c: Nat): Option(Sym) {
+  digit_or_pad(code_sextet(a, c), c)
+}
+
+pub fn syms_codes(a: Alphabet, l: List(Sym)): List(Nat) {
+  match l: List(Nat) {
+    Nil => Nil
+    Cons(x, t) => Cons(sym_code(a, x), syms_codes(a, t))
+  }
+}
+
+pub fn cons_some(o: Option(Sym), r: Option(List(Sym))): Option(List(Sym)) {
+  match o: Option(List(Sym)) {
+    None => None
+    Some(x) => match r: Option(List(Sym)) {
+      None => None
+      Some(t) => Some(Cons(x, t))
+    }
+  }
+}
+
+pub fn codes_syms(a: Alphabet, l: List(Nat)): Option(List(Sym)) {
+  match l: Option(List(Sym)) {
+    Nil => Some(Nil)
+    Cons(c, t) => cons_some(code_sym(a, c), codes_syms(a, t))
+  }
+}
+
+pub fn decode_syms(m: PadRule, o: Option(List(Sym))): Option(List(Byte)) {
+  match o: Option(List(Byte)) {
+    None => None
+    Some(l) => decode_with(m, l)
+  }
+}
+
+pub fn encode_text_with(a: Alphabet, pm: Padding, l: List(Byte)): List(Nat) {
+  syms_codes(a, encode_with(pm, l))
+}
+
+pub fn decode_text_with(a: Alphabet, m: PadRule, l: List(Nat)): Option(List(Byte)) {
+  decode_syms(m, codes_syms(a, l))
+}
+
+// RFC 4648 section 4, padded.
+pub fn encode_text(l: List(Byte)): List(Nat) {
+  encode_text_with(standard(), Padded, l)
+}
+
+pub fn decode_text(l: List(Nat)): Option(List(Byte)) {
+  decode_text_with(standard(), PadRequired, l)
+}

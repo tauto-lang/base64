@@ -1,0 +1,186 @@
+import "../src/alphabet.taut"
+import "../src/codec.taut"
+import "../src/text.taut"
+import std::Text
+import "../src/bytes.taut"
+
+// The test vectors of RFC 4648 section 10, checked by computation.
+
+// `a`, 97.
+fn byte_a(): Byte {
+  Byte::Mk(Bit0, Bit1, Bit1, Bit0, Bit0, Bit0, Bit0, Bit1)
+}
+
+// `b`, 98.
+fn byte_b(): Byte {
+  Byte::Mk(Bit0, Bit1, Bit1, Bit0, Bit0, Bit0, Bit1, Bit0)
+}
+
+// `f`, 102.
+fn byte_f(): Byte {
+  Byte::Mk(Bit0, Bit1, Bit1, Bit0, Bit0, Bit1, Bit1, Bit0)
+}
+
+// `o`, 111.
+fn byte_o(): Byte {
+  Byte::Mk(Bit0, Bit1, Bit1, Bit0, Bit1, Bit1, Bit1, Bit1)
+}
+
+// `r`, 114.
+fn byte_r(): Byte {
+  Byte::Mk(Bit0, Bit1, Bit1, Bit1, Bit0, Bit0, Bit1, Bit0)
+}
+
+// "" is "".
+theorem encode_empty(): encode_text(Nil) = Nil {
+  Refl
+}
+
+theorem decode_empty(): decode_text(Nil) = Some(Nil) {
+  Refl
+}
+
+// "f" is "Zg==".
+theorem encode_f(): encode_text(Cons(byte_f(), Nil)) = Cons(90, Cons(103, Cons(61, Cons(61, Nil)))) {
+  Refl
+}
+
+theorem decode_f(): decode_text(Cons(90, Cons(103, Cons(61, Cons(61, Nil))))) = Some(Cons(byte_f(), Nil)) {
+  Refl
+}
+
+// "fo" is "Zm8=".
+theorem encode_fo(): encode_text(Cons(byte_f(), Cons(byte_o(), Nil))) = Cons(90, Cons(109, Cons(56, Cons(61, Nil)))) {
+  Refl
+}
+
+theorem decode_fo(): decode_text(Cons(90, Cons(109, Cons(56, Cons(61, Nil))))) = Some(Cons(byte_f(), Cons(byte_o(), Nil))) {
+  Refl
+}
+
+// "foo" is "Zm9v".
+theorem encode_foo(): encode_text(Cons(byte_f(), Cons(byte_o(), Cons(byte_o(), Nil)))) = Cons(90, Cons(109, Cons(57, Cons(118, Nil)))) {
+  Refl
+}
+
+theorem decode_foo(): decode_text(Cons(90, Cons(109, Cons(57, Cons(118, Nil))))) = Some(Cons(byte_f(), Cons(byte_o(), Cons(byte_o(), Nil)))) {
+  Refl
+}
+
+// "foob" is "Zm9vYg==".
+theorem encode_foob(): encode_text(Cons(byte_f(), Cons(byte_o(), Cons(byte_o(), Cons(byte_b(), Nil))))) = Cons(90, Cons(109, Cons(57, Cons(118, Cons(89, Cons(103, Cons(61, Cons(61, Nil)))))))) {
+  Refl
+}
+
+theorem decode_foob(): decode_text(
+    Cons(90, Cons(109, Cons(57, Cons(118, Cons(89, Cons(103, Cons(61, Cons(61, Nil))))))))
+  ) = Some(Cons(byte_f(), Cons(byte_o(), Cons(byte_o(), Cons(byte_b(), Nil))))) {
+  Refl
+}
+
+// "fooba" is "Zm9vYmE=".
+theorem encode_fooba(): encode_text(Cons(byte_f(), Cons(byte_o(), Cons(byte_o(), Cons(byte_b(), Cons(byte_a(), Nil)))))) = Cons(90, Cons(109, Cons(57, Cons(118, Cons(89, Cons(109, Cons(69, Cons(61, Nil)))))))) {
+  Refl
+}
+
+theorem decode_fooba(): decode_text(
+    Cons(90, Cons(109, Cons(57, Cons(118, Cons(89, Cons(109, Cons(69, Cons(61, Nil))))))))
+  ) = Some(Cons(byte_f(), Cons(byte_o(), Cons(byte_o(), Cons(byte_b(), Cons(byte_a(), Nil)))))) {
+  Refl
+}
+
+// "foobar" is "Zm9vYmFy".
+theorem encode_foobar(): encode_text(
+    Cons(
+      byte_f(),
+      Cons(byte_o(), Cons(byte_o(), Cons(byte_b(), Cons(byte_a(), Cons(byte_r(), Nil)))))
+    )
+  ) = Cons(90, Cons(109, Cons(57, Cons(118, Cons(89, Cons(109, Cons(70, Cons(121, Nil)))))))) {
+  Refl
+}
+
+theorem decode_foobar(): decode_text(
+    Cons(90, Cons(109, Cons(57, Cons(118, Cons(89, Cons(109, Cons(70, Cons(121, Nil))))))))
+  ) = Some(
+    Cons(
+      byte_f(),
+      Cons(byte_o(), Cons(byte_o(), Cons(byte_b(), Cons(byte_a(), Cons(byte_r(), Nil)))))
+    )
+  ) {
+  Refl
+}
+
+// Decoding is strict: a final group whose unused bits are not zero, and a group
+// without its padding, are rejected.
+theorem decode_rejects_nonzero_tail(): decode_text(Cons(90, Cons(104, Cons(61, Cons(61, Nil))))) = None {
+  Refl
+}
+
+theorem decode_rejects_missing_pad(): decode_text(Cons(90, Cons(103, Nil))) = None {
+  Refl
+}
+
+// Without pads: "fo" is "Zm8", taken by a decoder that forbids or allows the
+// pads and rejected by one that requires them; "Zm8=" the other way round.
+theorem encode_fo_unpadded(): encode_text_with(standard(), Unpadded, Cons(byte_f(), Cons(byte_o(), Nil))) = Cons(90, Cons(109, Cons(56, Nil))) {
+  Refl
+}
+
+theorem decode_fo_unpadded(): decode_text_with(standard(), PadForbidden, Cons(90, Cons(109, Cons(56, Nil)))) = Some(Cons(byte_f(), Cons(byte_o(), Nil))) {
+  Refl
+}
+
+theorem decode_fo_optional_unpadded(): decode_text_with(standard(), PadOptional, Cons(90, Cons(109, Cons(56, Nil)))) = Some(Cons(byte_f(), Cons(byte_o(), Nil))) {
+  Refl
+}
+
+theorem decode_fo_optional_padded(): decode_text_with(standard(), PadOptional, Cons(90, Cons(109, Cons(56, Cons(61, Nil))))) = Some(Cons(byte_f(), Cons(byte_o(), Nil))) {
+  Refl
+}
+
+theorem decode_forbidden_rejects_pad(): decode_text_with(standard(), PadForbidden, Cons(90, Cons(109, Cons(56, Cons(61, Nil))))) = None {
+  Refl
+}
+
+// One symbol alone is never a group, with or without pads.
+theorem decode_optional_rejects_one_sextet(): decode_text_with(standard(), PadOptional, Cons(90, Nil)) = None {
+  Refl
+}
+
+// 0xfb 0xff: "+/8=" in the standard alphabet, "-_8=" in the URL-safe one,
+// which does not take "+" or "/".
+fn bytes_fb_ff(): List(Byte) {
+  Cons(
+    Byte::Mk(Bit1, Bit1, Bit1, Bit1, Bit1, Bit0, Bit1, Bit1),
+    Cons(Byte::Mk(Bit1, Bit1, Bit1, Bit1, Bit1, Bit1, Bit1, Bit1), Nil)
+  )
+}
+
+theorem encode_fb_ff(): encode_text(bytes_fb_ff()) = Cons(43, Cons(47, Cons(56, Cons(61, Nil)))) {
+  Refl
+}
+
+theorem encode_fb_ff_url_safe(): encode_text_with(url_safe(), Padded, bytes_fb_ff()) = Cons(45, Cons(95, Cons(56, Cons(61, Nil)))) {
+  Refl
+}
+
+theorem decode_fb_ff_url_safe(): decode_text_with(url_safe(), PadRequired, Cons(45, Cons(95, Cons(56, Cons(61, Nil))))) = Some(bytes_fb_ff()) {
+  Refl
+}
+
+theorem decode_url_safe_rejects_standard(): decode_text_with(url_safe(), PadRequired, Cons(43, Cons(47, Cons(56, Cons(61, Nil))))) = None {
+  Refl
+}
+
+// The text interface: the bytes of a text to an ASCII text, and back.
+theorem base64_encode_foobar(): Base64::encode("foobar") = "Zm9vYmFy" {
+  Refl
+}
+
+theorem base64_decode_foobar(): Base64::decode("Zm9vYmFy") = Some(Text::bytes("foobar")) {
+  Refl
+}
+
+theorem base64_encode_url_safe(): Base64::encode_bytes_with(url_safe(), Unpadded, Cons(251, Cons(255, Nil)), Refl) = "-_8" {
+  Refl
+}

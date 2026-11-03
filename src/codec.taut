@@ -1,0 +1,333 @@
+// Bytes to sextets and back, as RFC 4648 section 4 groups them: three bytes,
+// most significant bit first, are four sextets; a final group of one or two
+// bytes is filled with zero bits to two or three sextets and padded to four
+// symbols with `pad`.
+//
+// `encode_with` and `decode_with` take how the padding is written: an encoding
+// is `Padded` (RFC 4648) or `Unpadded` (the pads left out, as RFC 4648 section
+// 3.2 allows when the length is known), and a decoder requires the pads, takes
+// them or their absence, or forbids them. `encode` and `decode` are the padded
+// form of RFC 4648.
+
+import std::Base
+
+pub(open) inductive Bit: Type => fn Bit::beq, theorem Bit::beq_refl, theorem Bit::beq_sound, theorem Bit::deq {
+  Bit0: Bit
+  Bit1: Bit
+}
+
+// The lowest bit of `n`.
+pub fn bit_of(n: Nat): Bit {
+  match Nat::rem_nz(n, 2, Nat::succ_ne_zero(1)): Bit {
+    Zero => Bit0
+    Succ(k) => Bit1
+  }
+}
+
+// The value of `b`, and `n` with `b` put after its lowest bit.
+pub fn bit_nat(b: Bit): Nat {
+  match b: Nat {
+    Bit0 => 0
+    Bit1 => 1
+  }
+}
+
+pub fn bit_push(n: Nat, b: Bit): Nat {
+  Nat::add(Nat::mul(n, 2), bit_nat(b))
+}
+
+pub(open) inductive Byte: Type =>
+  fn Byte::beq, theorem Byte::beq_refl, theorem Byte::beq_sound, theorem Byte::deq {
+  Mk(x7: Bit, x6: Bit, x5: Bit, x4: Bit, x3: Bit, x2: Bit, x1: Bit, x0: Bit): Byte
+}
+
+pub(open) inductive Sextet: Type =>
+  fn Sextet::beq, theorem Sextet::beq_refl, theorem Sextet::beq_sound, theorem Sextet::deq {
+  Mk(x5: Bit, x4: Bit, x3: Bit, x2: Bit, x1: Bit, x0: Bit): Sextet
+}
+
+pub(open) inductive Sym: Type {
+  Digit(s: Sextet): Sym
+  Pad: Sym
+}
+
+pub(open) inductive Padding: Type {
+  Padded: Padding
+  Unpadded: Padding
+}
+
+// The pads that end a final group of one or two bytes.
+pub fn pad_tail(pm: Padding, k: List(Sym)): List(Sym) {
+  match pm: List(Sym) {
+    Padded => k
+    Unpadded => Nil
+  }
+}
+
+pub(open) inductive Carry: Type {
+  Empty: Carry
+  One(a: Byte): Carry
+  Two(a: Byte, b: Byte): Carry
+}
+
+fn encode_group(a: Byte, b: Byte, c: Byte, rest: List(Sym)): List(Sym) {
+  match a: List(Sym) {
+    Byte::Mk(a7, a6, a5, a4, a3, a2, a1, a0) => match b: List(Sym) {
+      Byte::Mk(b7, b6, b5, b4, b3, b2, b1, b0) => match c: List(Sym) {
+        Byte::Mk(
+          c7,
+          c6,
+          c5,
+          c4,
+          c3,
+          c2,
+          c1,
+          c0
+        ) => Cons(
+          Digit(Sextet::Mk(a7, a6, a5, a4, a3, a2)),
+          Cons(
+            Digit(Sextet::Mk(a1, a0, b7, b6, b5, b4)),
+            Cons(
+              Digit(Sextet::Mk(b3, b2, b1, b0, c7, c6)),
+              Cons(Digit(Sextet::Mk(c5, c4, c3, c2, c1, c0)), rest)
+            )
+          )
+        )
+      }
+    }
+  }
+}
+
+pub fn encode_from(pm: Padding, l: List(Byte), p: Carry): List(Sym) {
+  match l: List(Sym) {
+    Nil => match p: List(Sym) {
+      Empty => Nil
+      One(a) => match a: List(Sym) {
+        Byte::Mk(
+          a7,
+          a6,
+          a5,
+          a4,
+          a3,
+          a2,
+          a1,
+          a0
+        ) => Cons(
+          Digit(Sextet::Mk(a7, a6, a5, a4, a3, a2)),
+          Cons(
+            Digit(Sextet::Mk(a1, a0, Bit0, Bit0, Bit0, Bit0)),
+            pad_tail(pm, Cons(Pad, Cons(Pad, Nil)))
+          )
+        )
+      }
+      Two(a, b) => match a: List(Sym) {
+        Byte::Mk(a7, a6, a5, a4, a3, a2, a1, a0) => match b: List(Sym) {
+          Byte::Mk(
+            b7,
+            b6,
+            b5,
+            b4,
+            b3,
+            b2,
+            b1,
+            b0
+          ) => Cons(
+            Digit(Sextet::Mk(a7, a6, a5, a4, a3, a2)),
+            Cons(
+              Digit(Sextet::Mk(a1, a0, b7, b6, b5, b4)),
+              Cons(Digit(Sextet::Mk(b3, b2, b1, b0, Bit0, Bit0)), pad_tail(pm, Cons(Pad, Nil)))
+            )
+          )
+        }
+      }
+    }
+    Cons(x, t) => match p: List(Sym) {
+      Empty => encode_from(pm, t, One(x))
+      One(a) => encode_from(pm, t, Two(a, x))
+      Two(a, b) => encode_group(a, b, x, encode_from(pm, t, Empty))
+    }
+  }
+}
+
+pub(open) inductive Got: Type {
+  Got0: Got
+  Got1(s1: Sextet): Got
+  Got2(s1: Sextet, s2: Sextet): Got
+  Got3(s1: Sextet, s2: Sextet, s3: Sextet): Got
+}
+
+pub fn prepend3(a: Byte, b: Byte, c: Byte, o: Option(List(Byte))): Option(List(Byte)) {
+  match o: Option(List(Byte)) {
+    None => None
+    Some(r) => Some(Cons(a, Cons(b, Cons(c, r))))
+  }
+}
+
+pub fn decode_group(
+  s1: Sextet,
+  s2: Sextet,
+  s3: Sextet,
+  s4: Sextet,
+  o: Option(List(Byte))
+): Option(List(Byte)) {
+  match s1: Option(List(Byte)) {
+    Sextet::Mk(a7, a6, a5, a4, a3, a2) => match s2: Option(List(Byte)) {
+      Sextet::Mk(a1, a0, b7, b6, b5, b4) => match s3: Option(List(Byte)) {
+        Sextet::Mk(b3, b2, b1, b0, c7, c6) => match s4: Option(List(Byte)) {
+          Sextet::Mk(
+            c5,
+            c4,
+            c3,
+            c2,
+            c1,
+            c0
+          ) => prepend3(
+            Byte::Mk(a7, a6, a5, a4, a3, a2, a1, a0),
+            Byte::Mk(b7, b6, b5, b4, b3, b2, b1, b0),
+            Byte::Mk(c7, c6, c5, c4, c3, c2, c1, c0),
+            o
+          )
+        }
+      }
+    }
+  }
+}
+
+fn if_bit0(b: Bit, o: Option(List(Byte))): Option(List(Byte)) {
+  match b: Option(List(Byte)) {
+    Bit0 => o
+    Bit1 => None
+  }
+}
+
+// A final group of two sextets is one byte; the four bits left over must be 0.
+pub fn final_one_byte(s1: Sextet, s2: Sextet): Option(List(Byte)) {
+  match s1: Option(List(Byte)) {
+    Sextet::Mk(a7, a6, a5, a4, a3, a2) => match s2: Option(List(Byte)) {
+      Sextet::Mk(
+        a1,
+        a0,
+        z3,
+        z2,
+        z1,
+        z0
+      ) => if_bit0(
+        z3,
+        if_bit0(z2, if_bit0(z1, if_bit0(z0, Some(Cons(Byte::Mk(a7, a6, a5, a4, a3, a2, a1, a0), Nil)))))
+      )
+    }
+  }
+}
+
+// A final group of three sextets is two bytes; the two bits left over must be 0.
+pub fn final_two_bytes(s1: Sextet, s2: Sextet, s3: Sextet): Option(List(Byte)) {
+  match s1: Option(List(Byte)) {
+    Sextet::Mk(a7, a6, a5, a4, a3, a2) => match s2: Option(List(Byte)) {
+      Sextet::Mk(a1, a0, b7, b6, b5, b4) => match s3: Option(List(Byte)) {
+        Sextet::Mk(
+          b3,
+          b2,
+          b1,
+          b0,
+          z1,
+          z0
+        ) => if_bit0(
+          z1,
+          if_bit0(
+            z0,
+            Some(
+              Cons(
+                Byte::Mk(a7, a6, a5, a4, a3, a2, a1, a0),
+                Cons(Byte::Mk(b7, b6, b5, b4, b3, b2, b1, b0), Nil)
+              )
+            )
+          )
+        )
+      }
+    }
+  }
+}
+
+pub fn at_end(t: List(Sym), o: Option(List(Byte))): Option(List(Byte)) {
+  match t: Option(List(Byte)) {
+    Nil => o
+    Cons(y, u) => None
+  }
+}
+
+pub fn last_pad(t: List(Sym), o: Option(List(Byte))): Option(List(Byte)) {
+  match t: Option(List(Byte)) {
+    Nil => None
+    Cons(y, u) => match y: Option(List(Byte)) {
+      Digit(s) => None
+      Pad => at_end(u, o)
+    }
+  }
+}
+
+// How a decoder treats the pads: `PadRequired` takes only the padded form,
+// `PadForbidden` only the unpadded one, and `PadOptional` either.
+pub(open) inductive PadRule: Type {
+  PadRequired: PadRule
+  PadOptional: PadRule
+  PadForbidden: PadRule
+}
+
+// A final group that ends the input without pads.
+fn end_unpadded(m: PadRule, o: Option(List(Byte))): Option(List(Byte)) {
+  match m: Option(List(Byte)) {
+    PadRequired => None
+    PadOptional => o
+    PadForbidden => o
+  }
+}
+
+// A final group that ends with pads.
+fn end_padded(m: PadRule, o: Option(List(Byte))): Option(List(Byte)) {
+  match m: Option(List(Byte)) {
+    PadRequired => o
+    PadOptional => o
+    PadForbidden => None
+  }
+}
+
+pub fn decode_from(m: PadRule, l: List(Sym), w: Got): Option(List(Byte)) {
+  match l: Option(List(Byte)) {
+    Nil => match w: Option(List(Byte)) {
+      Got0 => Some(Nil)
+      Got1(s1) => None
+      Got2(s1, s2) => end_unpadded(m, final_one_byte(s1, s2))
+      Got3(s1, s2, s3) => end_unpadded(m, final_two_bytes(s1, s2, s3))
+    }
+    Cons(x, t) => match x: Option(List(Byte)) {
+      Digit(s) => match w: Option(List(Byte)) {
+        Got0 => decode_from(m, t, Got1(s))
+        Got1(s1) => decode_from(m, t, Got2(s1, s))
+        Got2(s1, s2) => decode_from(m, t, Got3(s1, s2, s))
+        Got3(s1, s2, s3) => decode_group(s1, s2, s3, s, decode_from(m, t, Got0))
+      }
+      Pad => match w: Option(List(Byte)) {
+        Got0 => None
+        Got1(s1) => None
+        Got2(s1, s2) => end_padded(m, last_pad(t, final_one_byte(s1, s2)))
+        Got3(s1, s2, s3) => end_padded(m, at_end(t, final_two_bytes(s1, s2, s3)))
+      }
+    }
+  }
+}
+
+pub fn encode_with(pm: Padding, l: List(Byte)): List(Sym) {
+  encode_from(pm, l, Empty)
+}
+
+pub fn decode_with(m: PadRule, l: List(Sym)): Option(List(Byte)) {
+  decode_from(m, l, Got0)
+}
+
+pub fn encode(l: List(Byte)): List(Sym) {
+  encode_with(Padded, l)
+}
+
+pub fn decode(l: List(Sym)): Option(List(Byte)) {
+  decode_with(PadRequired, l)
+}

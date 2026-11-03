@@ -1,0 +1,130 @@
+import std::Base
+import "codec.taut"
+import std::Text
+import std::Array
+
+// An alphabet is the 64 characters for the values 0 to 63 of a sextet, as
+// their ASCII codes, and a table from each ASCII code to the sextet it reads
+// as, so that decoding a character is one lookup. `alphabet_of` makes the
+// table. `alphabet_ok` in `proof/alphabet.taut` checks, by computation, that an
+// alphabet is 64 different ASCII characters other than `=` (61), the pad, with
+// its table; for one that passes, each sextet is read back from its code and
+// only from it.
+
+pub inductive Alphabet: Type {
+  Mk(chars: Text, table: Array(Option(Sextet))): Alphabet
+}
+
+fn alphabet_text(a: Alphabet): Text {
+  match a: Text {
+    Alphabet::Mk(t, d) => t
+  }
+}
+
+pub fn alphabet_table(a: Alphabet): Array(Option(Sextet)) {
+  match a: Array(Option(Sextet)) {
+    Alphabet::Mk(t, d) => d
+  }
+}
+
+pub fn alphabet_codes(a: Alphabet): List(Nat) {
+  Text::bytes(alphabet_text(a))
+}
+
+// The value of `s`, 0 to 63.
+fn sextet_index(s: Sextet): Nat {
+  match s: Nat {
+    Sextet::Mk(x5, x4, x3, x2, x1, x0) => bit_push(
+      bit_push(bit_push(bit_push(bit_push(bit_nat(x5), x4), x3), x2), x1),
+      x0
+    )
+  }
+}
+
+// The sextet whose value is `n`, below 64.
+fn sextet_of_index(n: Nat): Sextet {
+  Sextet::Mk(
+    bit_of(Nat::div_nz(n, 32, Nat::succ_ne_zero(31))),
+    bit_of(Nat::div_nz(n, 16, Nat::succ_ne_zero(15))),
+    bit_of(Nat::div_nz(n, 8, Nat::succ_ne_zero(7))),
+    bit_of(Nat::div_nz(n, 4, Nat::succ_ne_zero(3))),
+    bit_of(Nat::div_nz(n, 2, Nat::succ_ne_zero(1))),
+    bit_of(n)
+  )
+}
+
+fn code_or_zero(o: Option(Nat)): Nat {
+  match o: Nat {
+    None => 0
+    Some(c) => c
+  }
+}
+
+pub fn sextet_code(a: Alphabet, s: Sextet): Nat {
+  code_or_zero(Text::byte(alphabet_text(a), sextet_index(s)))
+}
+
+// The sextet whose code is `c`: `xs` are the codes of the sextets `j`, `j + 1`, ….
+fn find_code(xs: List(Nat), c: Nat, j: Nat): Option(Sextet) {
+  match xs: Option(Sextet) {
+    Nil => None
+    Cons(x, xt) => if Nat::eq(x, c) { Some(sextet_of_index(j)) } else { find_code(xt, c, Succ(j)) }
+  }
+}
+
+// The sextets that the codes `i`, `i + 1`, …, `i + n - 1` read as.
+fn table_list(xs: List(Nat), n: Nat, i: Nat): List(Option(Sextet)) {
+  match n: List(Option(Sextet)) {
+    Zero => Nil
+    Succ(k) => Cons(find_code(xs, i, 0), table_list(xs, k, Succ(i)))
+  }
+}
+
+fn table_of(xs: List(Nat)): Array(Option(Sextet)) {
+  Array::of_list(table_list(xs, 128, 0))
+}
+
+pub fn alphabet_of(t: Text): Alphabet {
+  Alphabet::Mk(t, table_of(Text::bytes(t)))
+}
+
+pub fn table_entry(o: Option(Option(Sextet))): Option(Sextet) {
+  match o: Option(Sextet) {
+    None => None
+    Some(x) => x
+  }
+}
+
+pub fn code_sextet(a: Alphabet, c: Nat): Option(Sextet) {
+  table_entry(Array::get(alphabet_table(a), c))
+}
+
+// RFC 4648 section 4.
+pub fn standard(): Alphabet {
+  alphabet_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+}
+
+// RFC 4648 section 5: safe in URLs and file names.
+pub fn url_safe(): Alphabet {
+  alphabet_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+}
+
+// crypt(3).
+pub fn crypt(): Alphabet {
+  alphabet_of("./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+}
+
+// bcrypt.
+pub fn bcrypt(): Alphabet {
+  alphabet_of("./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+}
+
+// The modified UTF-7 of IMAP mailbox names (RFC 3501).
+pub fn imap_mutf7(): Alphabet {
+  alphabet_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+,")
+}
+
+// BinHex 4.
+pub fn bin_hex(): Alphabet {
+  alphabet_of("!\"#$%&'()*+,-012345689@ABCDEFGHIJKLMNPQRSTUVXYZ[`abcdefhijklmpqr")
+}
